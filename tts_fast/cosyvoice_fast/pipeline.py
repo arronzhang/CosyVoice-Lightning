@@ -1,4 +1,6 @@
 from typing import AsyncGenerator
+from pathlib import Path
+import os
 from ruamel import yaml
 import ray
 import asyncio
@@ -17,7 +19,9 @@ class CosyVoicePipeline:
         ray.init(
             num_cpus=FLOW_ACTOR_COUNT + HIFT_ACTOR_COUNT,
             runtime_env={
-                "py_modules": [tts_fast, cosyvoice, matcha, stepaudio],
+                # Use package paths instead of module objects so Ray's uv hook can
+                # deepcopy runtime_env when the driver is launched via `uv run`.
+                "py_modules": self._runtime_py_modules(),
                 "excludes": ["__pycache__"],
             },
         )
@@ -27,6 +31,21 @@ class CosyVoicePipeline:
         self.llm = LLMWrapper(model_dir)
         self.flow_pool = FlowPool(model_dir, self.pre_lookahead_len, self.token_frame_rate)
         self.hift_pool = HiftPool(model_dir)
+
+    @staticmethod
+    def _runtime_py_modules() -> list[str]:
+        modules = [tts_fast, cosyvoice, matcha, stepaudio]
+        paths: list[str] = []
+        for module in modules:
+            module_paths = getattr(module, "__path__", None)
+            if module_paths:
+                base_path = Path(next(iter(module_paths))).resolve()
+            else:
+                base_path = Path(module.__file__).resolve().parent
+            path_str = str(base_path)
+            if path_str not in paths:
+                paths.append(path_str)
+        return paths
 
     def set_config(self, model_dir):
         config_name = "cosyvoice3" if VERSION == "cosyvoice3" else "cosyvoice2"
