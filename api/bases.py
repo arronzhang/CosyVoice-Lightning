@@ -84,7 +84,7 @@ class TTSStreamOutput(BaseModel):
 
 
 class OpenAISpeechInput(BaseModel):
-    model: str = Field(description="OpenAI-compatible model name")
+    model: str = Field(description="OpenAI-compatible model name", default="CosyVoice")
     input: str = Field(description="Text to synthesize")
     voice: str = Field(description="Voice name, mapped to local prompt_id")
     instructions: Union[str | None] = Field(description="Optional speaking instructions", default=None)
