@@ -11,7 +11,7 @@ from datetime import datetime
 from tempfile import NamedTemporaryFile
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from io import BytesIO
 import soundfile
@@ -115,6 +115,90 @@ async def lifespan(app: MyApp):
 
 
 app = MyApp(lifespan=lifespan)
+
+
+OPENAI_AUDIO_MEDIA_TYPES = {
+    "mp3": "audio/mpeg",
+    "opus": "audio/ogg",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+    "wav": "audio/wav",
+    "pcm": "application/octet-stream",
+}
+
+OPENAI_AUDIO_CHUNK_SECONDS = float(os.getenv("OPENAI_AUDIO_CHUNK_SECONDS", 0.5))
+
+
+def openai_error(message: str, *, status_code: int, type_: str = "invalid_request_error", param: str | None = None):
+    return JSONResponse(
+        {
+            "error": {
+                "message": message,
+                "type": type_,
+                "param": param,
+                "code": None,
+            }
+        },
+        status_code=status_code,
+    )
+
+
+async def iter_tts_audio_chunks(
+    *,
+    text: str,
+    prompt_id: str,
+    instruct_text: str | None,
+    speed: float,
+    flow_window_size: int = 500,
+    flow_window_shift: int = 50,
+    llm_keep_orig_prompt: bool = True,
+    llm_min_cached_count: int = 1,
+    llm_max_cached_length: int = 512,
+    repack_seconds: float = OPENAI_AUDIO_CHUNK_SECONDS,
+):
+    output_stream = app.tts_model.async_request(
+        text,
+        None,
+        None,
+        instruct_text,
+        prompt_id,
+        speed=speed,
+        split_text=True,
+        stream=True,
+        flow_window_size=flow_window_size,
+        flow_window_shift=flow_window_shift,
+        llm_keep_orig_prompt=llm_keep_orig_prompt,
+        llm_min_cached_count=llm_min_cached_count,
+        llm_max_cached_length=llm_max_cached_length,
+    )
+    repacking_size = max(1, int(app.tts_model.sample_rate * repack_seconds))
+    capacity = int(app.tts_model.sample_rate * 10)
+    repacked_stream = async_repack(output_stream, repacking_size, repacking_size, capacity)
+
+    async for chunk_ndarray in repacked_stream:
+        if app.config["tts"]["do_removing_silence"]:
+            chunk_ndarray = remove_silence(
+                chunk_ndarray,
+                app.tts_model.sample_rate,
+                app.config["tts"]["left_retention_seconds"],
+                app.config["tts"]["right_retention_seconds"],
+            )
+        if len(chunk_ndarray) > 0:
+            yield chunk_ndarray
+
+
+async def collect_tts_audio(audio_stream) -> np.ndarray:
+    audio_ndarray = []
+    async for chunk_ndarray in audio_stream:
+        audio_ndarray.append(chunk_ndarray)
+    if len(audio_ndarray) == 0:
+        return np.array([], dtype=np.float32)
+    return np.concatenate(audio_ndarray)
+
+
+async def encode_pcm_stream(audio_stream):
+    async for chunk_ndarray in audio_stream:
+        yield float32_to_int16(to_mono(chunk_ndarray)).tobytes()
 
 
 @app.exception_handler(Exception)
@@ -247,6 +331,58 @@ async def tts(req: TTSInput):
             media_type="audio/wav",
             headers={"Content-Disposition": "attachment; filename=audio.wav"},
         )
+
+
+@app.post("/v1/audio/speech")
+async def openai_audio_speech(req: OpenAISpeechInput):
+    logger.info("OpenAI Speech Request: %s" % truncate_long_str(req.model_dump()))
+
+    if req.voice not in app.tts_model.get_speakers():
+        return openai_error(f"Unknown voice: {req.voice}", status_code=http.HTTPStatus.NOT_FOUND, param="voice")
+
+    response_format = req.response_format.lower()
+    if response_format not in OPENAI_AUDIO_MEDIA_TYPES:
+        supported = ", ".join(OPENAI_AUDIO_MEDIA_TYPES)
+        return openai_error(
+            f"Unsupported response_format `{req.response_format}`. Supported formats: {supported}.",
+            status_code=http.HTTPStatus.BAD_REQUEST,
+            param="response_format",
+        )
+
+    if req.instructions is not None and len(req.instructions) == 0:
+        req.instructions = None
+
+    audio_stream = iter_tts_audio_chunks(
+        text=req.input,
+        prompt_id=req.voice,
+        instruct_text=req.instructions,
+        speed=req.speed,
+    )
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="speech.{response_format}"',
+        "X-Accel-Buffering": "no",
+    }
+    if response_format == "pcm":
+        return StreamingResponse(
+            encode_pcm_stream(audio_stream),
+            media_type=OPENAI_AUDIO_MEDIA_TYPES[response_format],
+            headers=headers,
+        )
+
+    audio_ndarray = await collect_tts_audio(audio_stream)
+    audio_bytes = ndarray_to_any_format(
+        audio_ndarray,
+        sample_rate=app.tts_model.sample_rate,
+        resample_rate=app.tts_model.sample_rate,
+        format=response_format,
+        return_base64=False,
+    )
+    return Response(
+        content=audio_bytes,
+        media_type=OPENAI_AUDIO_MEDIA_TYPES[response_format],
+        headers=headers,
+    )
 
 
 @dataclass

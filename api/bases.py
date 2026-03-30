@@ -81,3 +81,12 @@ class TTSStreamOutput(BaseModel):
     data: Union[str | None] = Field(description="流式合成音频的 base64 数据", default=None)
     audio_format: Union[str | None] = Field(description="合成音频格式", default=None)
     sample_rate: Union[int | None] = Field(description="合成音频采样率", default=None)
+
+
+class OpenAISpeechInput(BaseModel):
+    model: str = Field(description="OpenAI-compatible model name")
+    input: str = Field(description="Text to synthesize")
+    voice: str = Field(description="Voice name, mapped to local prompt_id")
+    instructions: Union[str | None] = Field(description="Optional speaking instructions", default=None)
+    response_format: str = Field(description="Audio response format", default="mp3")
+    speed: float = Field(description="Speaking speed", default=1.0)
