@@ -123,7 +123,7 @@ OPENAI_AUDIO_MEDIA_TYPES = {
     "aac": "audio/aac",
     "flac": "audio/flac",
     "wav": "audio/wav",
-    "pcm": "application/octet-stream",
+    "pcm": "audio/pcm",
 }
 
 OPENAI_AUDIO_CHUNK_SECONDS = float(os.getenv("OPENAI_AUDIO_CHUNK_SECONDS", 0.5))
