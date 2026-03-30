@@ -241,6 +241,7 @@ async def tts(req: TTSInput):
     else:
         buffer = BytesIO()
         soundfile.write(buffer, audio_ndarray, format="wav", samplerate=app.tts_model.sample_rate)
+        buffer.seek(0)
         return StreamingResponse(
             buffer,
             media_type="audio/wav",

@@ -40,6 +40,6 @@ SAMPLING_PARAMS = {
     "top_p": 1,  # 不能低于 0.8，否则无法生成正常语音
     "top_k": 25,
     "detokenize": False,
-    "ignore_eos": False,
+    "ignore_eos": True,
     "output_kind": RequestOutputKind.DELTA,
 }

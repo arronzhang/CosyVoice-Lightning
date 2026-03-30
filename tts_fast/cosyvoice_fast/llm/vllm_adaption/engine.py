@@ -71,7 +71,11 @@ def get_generation_fn(model_dir, model_name="cosyvoice2llm", force_registration=
     ENGINE_ARGS["hf_overrides"] = (
         {"architectures": ["CosyVoice2LLM"]}
         if model_name == "cosyvoice2llm"
-        else {"architectures": ["CosyVoice3LLM"]}
+        else {
+            "architectures": ["CosyVoice3LLM"],
+            "bos_token_id": 6561,
+            "eos_token_id": 6562,
+        }
     )
     engine = AsyncLLMEngine.from_engine_args(
         AsyncEngineArgs(model=model_dir, **ENGINE_ARGS)
@@ -87,7 +91,10 @@ def get_generation_fn(model_dir, model_name="cosyvoice2llm", force_registration=
             **SAMPLING_PARAMS,
             stop_token_ids=stop_token_ids,
             max_tokens=max_tokens,
-            min_tokens=min_tokens,
+            # vLLM's MinTokensLogitsProcessor assumes the model's stop/eos
+            # tokens live in the same logits space. For CosyVoice's custom
+            # speech-token head that assumption is false, so keep it disabled.
+            min_tokens=0,
         )
         async for output in engine.generate(
             {"prompt_token_ids": input_token_ids},

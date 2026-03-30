@@ -23,7 +23,8 @@ NOVASR_MODEL_PATH = str(os.getenv("NOVASR_MODEL_PATH", ROOT / "assets" / "novasr
 
 
 # 等待超时时间
-WAITING_TIMEOUT = float(os.getenv("WAITING_TIMEOUT", 30.0))
+# 首次请求会触发 flow/hift 的冷启动和图编译，30s 在默认配置下不够稳定。
+WAITING_TIMEOUT = float(os.getenv("WAITING_TIMEOUT", 120.0))
 
 #######################
 #### Flow 相关配置 ####
